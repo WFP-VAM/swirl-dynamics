@@ -5,6 +5,14 @@
 _pycache__/
 .cache/
 
+# Data
+*.zarr*
+*.nc*
+
+# Checkpoint files
+*core.*
+*-checkpoint.*
+
 # Poetry, setuptools, PyPI distribution artifacts.
 /*.egg-info
 .eggs/
