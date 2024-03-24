@@ -45,7 +45,7 @@ PyTree = Any
 class StableARModelConfig:
   """Config used by stable AR models."""
 
-  state_dimension: tuple[int]
+  state_dimension: tuple[int, ...]
   dynamics_model: nn.Module
   integrator: choices.Integrator
   measure_dist: measure_distances.MeasureDistFn
@@ -58,6 +58,7 @@ class StableARModelConfig:
   use_sobolev_norm: bool = False
   order_sobolev_norm: int = 1
   normalize_stats: dict[str, Array | None] | None = None
+  mmd_bandwidth: tuple[float, ...] = (0.2, 0.5, 0.9, 1.3)
 
 
 @dataclasses.dataclass(kw_only=True)
@@ -433,6 +434,7 @@ class DistributedStableARTrainer(trainers.BasicDistributedTrainer):
 
     dt = jnp.mean(jnp.diff(batch_data["t"], axis=1))
     tspan = jnp.arange(num_time_steps) * dt
+    rollout_weight = self.conf.rollout_weighting(num_time_steps)
     # `x0`: first "state" (which can be `num_lookback_steps` time steps).
     # `true`: num_rollout_steps + 1 states (where the first state corresponds to
     # x0, except when num_lookback_steps > 1, where true[:, 0] corresponds to
@@ -452,6 +454,7 @@ class DistributedStableARTrainer(trainers.BasicDistributedTrainer):
         x0=x0,
         true=true,
         tspan=np.tile(tspan, (jax.device_count(), 1)),
+        rollout_weight=np.tile(rollout_weight, (jax.device_count(), 1)),
     )
 
     return jax.jit(trainers.reshape_for_pmap)(batch_dict)
