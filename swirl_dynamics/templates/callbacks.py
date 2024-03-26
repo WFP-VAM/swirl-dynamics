@@ -15,26 +15,20 @@
 """Training callback library."""
 
 from collections.abc import Mapping, Sequence
-import dataclasses
 import os
 import time
-from typing import Any
 
-from absl import logging
 from clu import metric_writers
-from clu import parameter_overview
 from clu import periodic_actions
 import flax
 import gin
 import jax
 import numpy as np
 import orbax.checkpoint as ocp
-from swirl_dynamics.templates import train_states
 from swirl_dynamics.templates import trainers
 import tqdm.auto as tqdm
 
 Array = jax.Array
-ComputedMetrics = Mapping[str, Array | Mapping[str, Array]]
 Trainer = trainers.BaseTrainer
 
 
@@ -86,7 +80,7 @@ class Callback:
     """Called before a training segment begins."""
 
   def on_train_batches_end(
-      self, trainer: Trainer, train_metrics: ComputedMetrics
+      self, trainer: Trainer, train_metrics: Mapping[str, Array]
   ) -> None:
     """Called after a training segment ends."""
 
@@ -94,7 +88,7 @@ class Callback:
     """Called before an evaluation segment begins."""
 
   def on_eval_batches_end(
-      self, trainer: Trainer, eval_metrics: ComputedMetrics
+      self, trainer: Trainer, eval_metrics: Mapping[str, Array]
   ) -> None:
     """Called after an evaluation segment ends."""
 
@@ -133,7 +127,7 @@ class TrainStateCheckpoint(Callback):
       )
 
   def on_train_batches_end(
-      self, trainer: Trainer, train_metrics: ComputedMetrics
+      self, trainer: Trainer, train_metrics: Mapping[str, Array]
   ) -> None:
     assert self.last_eval_metric is not None
     cur_step = trainer.train_state.int_step
@@ -147,7 +141,7 @@ class TrainStateCheckpoint(Callback):
       )
 
   def on_eval_batches_end(
-      self, trainer: Trainer, eval_metrics: ComputedMetrics
+      self, trainer: Trainer, eval_metrics: Mapping[str, Array]
   ) -> None:
     del trainer
     self.last_eval_metric = eval_metrics
@@ -191,7 +185,7 @@ class ProgressReport(Callback):
     )
 
   def on_train_batches_end(
-      self, trainer: Trainer, train_metrics: ComputedMetrics
+      self, trainer: Trainer, train_metrics: Mapping[str, Array]
   ) -> None:
     del train_metrics
     assert self.report_progress is not None
@@ -228,7 +222,7 @@ class TqdmProgressBar(Callback):
     self.bar = tqdm.tqdm(total=self.total_train_steps, unit="step")
 
   def on_train_batches_end(
-      self, trainer: Trainer, train_metrics: ComputedMetrics
+      self, trainer: Trainer, train_metrics: Mapping[str, Array]
   ) -> None:
     assert self.bar is not None
     self.bar.update(trainer.train_state.int_step - self.current_step)
@@ -239,7 +233,7 @@ class TqdmProgressBar(Callback):
     self.bar.set_postfix(**postfix, **self.eval_postfix)
 
   def on_eval_batches_end(
-      self, trainer: Trainer, eval_metrics: ComputedMetrics
+      self, trainer: Trainer, eval_metrics: Mapping[str, Array]
   ) -> None:
     del trainer
     self.eval_postfix = {
@@ -262,49 +256,3 @@ class LogGinConfig(Callback):
           0, {"config": gin.markdown(config_str), "raw_config_str": config_str}
       )
       self.metric_writer.flush()
-
-
-def _get_markdown_param_table(
-    params: dict[str, np.ndarray] | Mapping[str, Mapping[str, Any]]
-) -> str:
-  """Returns a markdown table of parameters."""
-  param_table = parameter_overview.get_parameter_overview(
-      params, include_stats="global"
-  )
-  # Changes: remove first and second last rows (upper and lower table borders)
-  # and replace `+`s in 3rd row with `|`s.
-  rows = param_table.split("\n")
-  header = rows[1]
-  hline = rows[2].replace("+", "|")
-  body = rows[3:-2]
-  total = rows[-1]
-  return "\n".join([header, hline] + body + ["", total])
-
-
-@dataclasses.dataclass
-class ParameterOverview(Callback):
-  """Writes parameter overview to INFO log and/or TensorBoard."""
-
-  log_to_info: bool = True
-  log_to_tb: bool = True
-
-  def on_train_begin(self, trainer: trainers.BaseTrainer) -> None:
-    if jax.process_index() == 0:
-      if isinstance(trainer.train_state, train_states.BasicTrainState):
-        params = trainer.train_state.params
-        if self.log_to_info:
-          logging.info("Logging parameter overview.")
-          parameter_overview.log_parameter_overview(params)
-
-        if self.log_to_tb:
-          self.metric_writer.write_texts(
-              0,
-              {"parameters": _get_markdown_param_table(params)},
-          )
-          self.metric_writer.flush()
-      else:
-        logging.warning(
-            "ParameterOverview callback: unable extract parameters for"
-            " overivew."
-        )
-

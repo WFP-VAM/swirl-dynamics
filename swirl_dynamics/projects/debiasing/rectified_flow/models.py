@@ -21,7 +21,7 @@ final conditions are drawn from such distributions, namely, $X_0 \sim \mu_0$
 and $X_1 \sim \mu_1$.
 
 Rectified flow achieves this by by minimizing the loss
-  $E_{t ~ U[\eps, 1-\eps]} E_{X_0, X_1} [ \| X_1 - X_0 - v(X_t, t)  \|^2]$,
+  $E_{t} E_{X_0, X_1} [ \| X_1 - X_0 - v(X_t, t)  \|^2]$,
 where $X_t = t * X_1 + (1 - t) X_0$, for $t \in [0,1]$.
 Basically, the loss tries to obtain a straight line between x_0 and x_1, i.e.,
 $X_1 = X_0 + \Delta t v_0$, for $\Delta t = 1$. However, one can
@@ -30,7 +30,7 @@ should yield $X_1 = X_0 + \Delta t v_t$ for $t \in [0, 1]$, which is exactly the
 expression that the loss is pursuing.
 
 References:
-[1] Xingchao Liu, Chengyue Gong and Qiang Liu. "Flow Straight and Fast:
+[1]: Xingchao Liu, Chengyue Gong and Qiang Liu. "Flow Straight and Fast:
   Learning to Generate and Transfer Data with Rectified Flow" NeurIPS 2022,
   Workshop on Score-Based Methods.
 """
@@ -89,7 +89,7 @@ class ReFlowModel(models.BaseModel):
 
   input_shape: tuple[int, ...]
   flow_model: nn.Module
-  time_sampling: Callable[[Array, tuple[int, ...]], Array] = functools.partial(
+  time_sampling: Callable[[Array, tuple[int]], Array] = functools.partial(
       jax.random.uniform, dtype=jnp.float32
   )
 
@@ -130,9 +130,7 @@ class ReFlowModel(models.BaseModel):
     batch_size = len(batch["x_0"])
     time_sample_rng, dropout_rng = jax.random.split(rng, num=2)
 
-    time_range = self.max_eval_time_lvl - self.min_eval_time_lvl
-    time = (time_range * self.time_sampling(time_sample_rng, (batch_size,))
-            + self.min_eval_time_lvl)
+    time = self.time_sampling(time_sample_rng, (batch_size,))
 
     vmap_mult = jax.vmap(jnp.multiply, in_axes=(0, 0))
 
@@ -244,13 +242,6 @@ class RescaledUnet(unets.UNet):
       is_training: bool,
   ) -> Array:
     """Runs rescaled Unet with noise input."""
-    if x.shape[-1] != self.out_channels:
-      raise ValueError(
-          f"Number of channels in the input ({x.shape[-1]}) must "
-          "match the number of channels in the output "
-          f"{self.out_channel})."
-      )
-
     if sigma.ndim < 1:
       sigma = jnp.broadcast_to(sigma, (x.shape[0],))
 
