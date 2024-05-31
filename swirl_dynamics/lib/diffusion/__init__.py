@@ -22,8 +22,6 @@ from swirl_dynamics.lib.diffusion.diffusion import (
     InvertibleSchedule,
     NoiseLevelSampling,
     NoiseLossWeighting,
-    create_variance_exploding_scheme,
-    create_variance_preserving_scheme,
     edm_weighting,
     exponential_noise_schedule,
     inverse_squared_weighting,
@@ -50,13 +48,10 @@ from swirl_dynamics.lib.diffusion.samplers import (
     uniform_time,
 )
 from swirl_dynamics.lib.diffusion.unets import (
-    AxialMLPInterpConvMerge,
-    InterpConvMerge,
+    PreconditionedDenoiser,
     UNet,
 )
-from swirl_dynamics.lib.diffusion.unets import PreconditionedDenoiser as PreconditionedDenoiserUNet
-from swirl_dynamics.lib.diffusion.unets3d import PreconditionedDenoiser3d as PreconditionedDenoiserUNet3d
-from swirl_dynamics.lib.diffusion.unets3d import UNet3d
-from swirl_dynamics.lib.diffusion.vivit import ViViT
-from swirl_dynamics.lib.diffusion.vivit_diffusion import PreconditionedDenoiser as PreconditionedDenoiserViViT
-from swirl_dynamics.lib.diffusion.vivit_diffusion import ViViTDiffusion
+from swirl_dynamics.lib.diffusion.unets3d import (
+    PreconditionedDenoiser3d,
+    UNet3d,
+)

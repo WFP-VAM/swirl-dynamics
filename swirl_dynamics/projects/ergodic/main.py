@@ -15,7 +15,6 @@
 r"""The main entry point for running training loops."""
 # TODO: Consider enabling float64 for Lorenz63 experiment
 
-import functools
 import json
 from os import path as osp
 from typing import Iterable, Tuple
@@ -92,23 +91,12 @@ def main(argv):
   else:
     raise NotImplementedError(f"Unknown experiment: {config.experiment}")
 
-  # Slicing the decay options in the learning rate scheduler.
-  if "decay_rate" in config:
-    decay_rate = config.decay_rate
-  else:
-    decay_rate = 0.5
-
-  if "num_steps_for_decrease_lr" in config:
-    num_steps_for_decrease_lr = config.num_steps_for_decrease_lr
-  else:
-    num_steps_for_decrease_lr = config.train_steps_per_cycle
-
   if config.use_lr_scheduler:
     optimizer = optax.adam(
         learning_rate=optax.exponential_decay(
             init_value=config.lr,
-            transition_steps=num_steps_for_decrease_lr,
-            decay_rate=decay_rate,
+            transition_steps=config.train_steps_per_cycle,
+            decay_rate=0.5,
             staircase=True,
         )
     )
@@ -126,9 +114,6 @@ def main(argv):
         seed=config.seed,
         normalize=config.normalize,
         split="train",
-        tf_lookup_batch_size=config.tf_lookup_batch_size,
-        tf_lookup_num_parallel_calls=config.tf_lookup_num_parallel_calls,
-        tf_interleaved_shuffle=config.tf_interleaved_shuffle,
     )
     eval_loader, _ = utils.create_loader_from_tfds(
         num_time_steps=config.num_time_steps_eval,
@@ -139,40 +124,7 @@ def main(argv):
         dataset_name=config.dataset_name,
         normalize=config.normalize,
         split="eval",
-        tf_lookup_batch_size=config.tf_lookup_batch_size,
-        tf_lookup_num_parallel_calls=config.tf_lookup_num_parallel_calls,
-        tf_interleaved_shuffle=config.tf_interleaved_shuffle,
     )
-  elif "use_hdf5_reshaped" in config and config.use_hdf5_reshaped:
-    train_loader, normalize_stats = utils.create_loader_from_hdf5_reshaped(
-        num_time_steps=config.num_time_steps,
-        time_stride=config.time_stride,
-        batch_size=config.batch_size,
-        seed=config.seed,
-        dataset_path=config.dataset_path,
-        split="train",
-        normalize=config.normalize,
-        normalize_stats=None,
-        spatial_downsample_factor=config.spatial_downsample_factor,
-        tf_lookup_batch_size=config.tf_lookup_batch_size,
-        tf_lookup_num_parallel_calls=config.tf_lookup_num_parallel_calls,
-        tf_interleaved_shuffle=config.tf_interleaved_shuffle,
-    )
-    eval_loader, _ = utils.create_loader_from_hdf5_reshaped(
-        num_time_steps=-1,
-        time_stride=config.time_stride,
-        batch_size=-1,
-        seed=config.seed,
-        dataset_path=config.dataset_path,
-        split="eval",
-        normalize=config.normalize,
-        normalize_stats=normalize_stats,
-        spatial_downsample_factor=config.spatial_downsample_factor,
-        tf_lookup_batch_size=config.tf_lookup_batch_size,
-        tf_lookup_num_parallel_calls=config.tf_lookup_num_parallel_calls,
-        tf_interleaved_shuffle=config.tf_interleaved_shuffle,
-    )
-
   else:
     train_loader, normalize_stats = utils.create_loader_from_hdf5(
         num_time_steps=config.num_time_steps,
@@ -184,9 +136,6 @@ def main(argv):
         normalize=config.normalize,
         normalize_stats=None,
         spatial_downsample_factor=config.spatial_downsample_factor,
-        tf_lookup_batch_size=config.tf_lookup_batch_size,
-        tf_lookup_num_parallel_calls=config.tf_lookup_num_parallel_calls,
-        tf_interleaved_shuffle=config.tf_interleaved_shuffle,
     )
     eval_loader, _ = utils.create_loader_from_hdf5(
         num_time_steps=-1,
@@ -198,24 +147,10 @@ def main(argv):
         normalize=config.normalize,
         normalize_stats=normalize_stats,
         spatial_downsample_factor=config.spatial_downsample_factor,
-        tf_lookup_batch_size=config.tf_lookup_batch_size,
-        tf_lookup_num_parallel_calls=config.tf_lookup_num_parallel_calls,
-        tf_interleaved_shuffle=config.tf_interleaved_shuffle,
     )
 
   # Model
-  measure_dist_fn_raw = choices.MeasureDistance(
-      config.measure_dist_type
-  ).dispatch()
-
-  # We modify the bandwith in this case.
-  if config.measure_dist_type == "MMD":
-    measure_dist_fn = functools.partial(
-        measure_dist_fn_raw, bandwidth=config.mmd_bandwidth
-    )
-  else:
-    measure_dist_fn = measure_dist_fn_raw
-
+  measure_dist_fn = choices.MeasureDistance(config.measure_dist_type).dispatch()
   model_config = stable_ar.StableARModelConfig(
       state_dimension=state_dims,
       dynamics_model=choices.Model(config.model).dispatch(config),

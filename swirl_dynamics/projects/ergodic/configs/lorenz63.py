@@ -37,9 +37,6 @@ def get_config():
   config.max_checkpoints_to_keep = 10
   config.use_sobolev_norm = False
   config.order_sobolev_norm = 0
-  config.tf_lookup_batch_size = 8192
-  config.tf_lookup_num_parallel_calls = -1
-  config.tf_interleaved_shuffle = False
 
   # Data params
   config.batch_size = 2048

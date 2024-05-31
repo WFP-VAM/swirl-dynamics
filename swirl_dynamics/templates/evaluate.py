@@ -17,7 +17,7 @@
 from collections.abc import Iterable, Iterator, Mapping, Sequence
 import functools
 import time
-from typing import Any, Literal, Protocol, Self
+from typing import Any, Protocol
 
 from absl import logging
 from clu import metric_writers
@@ -32,35 +32,12 @@ import jax.numpy as jnp
 import numpy as np
 from orbax import checkpoint
 from swirl_dynamics.data import hdf5_utils
-from swirl_dynamics.data import zarr_utils
-import xarray as xr
 
 filesys = epath.backend.tf_backend
 
 InferenceModel = Any
 BatchType = Any
 PredType = Any
-
-
-# Forked from clu.metrics
-def _broadcast_masks(values: jax.Array, mask: jax.Array | None):
-  """Checks and broadcasts mask for aggregating values."""
-  if values.ndim == 0:
-    values = values[None]
-  if mask is None:
-    mask = jnp.ones_like(values)
-  # Leading dimensions of mask and values must match.
-  if mask.shape[0] != values.shape[0]:
-    raise ValueError(
-        "Argument `mask` must have the same leading dimension as `values`. "
-        f"Received mask of dimension {mask.shape} "
-        f"and values of dimension {values.shape}."
-    )
-  # Broadcast mask to the same number of dimensions as values.
-  if mask.ndim < values.ndim:
-    mask = jnp.expand_dims(mask, axis=tuple(np.arange(mask.ndim, values.ndim)))
-  mask = mask.astype(bool)
-  return values, mask
 
 
 class Benchmark(Protocol):
@@ -150,118 +127,6 @@ def TensorAverage(  # pylint: disable=invalid-name
       return jnp.sqrt(res) if rms else res
 
   return _TensorAverage
-
-
-def TensorRatio(  # pylint: disable=invalid-name
-    axis: int | tuple[int, ...] | None = None
-):
-  """Computes the ratio between two aggregated metrics.
-
-  The ratio is performed after full aggregation of numerator and denominator.
-  For numerator and denominator, only entries on the selected axes are
-  aggregated, while the remaining axes stay untouched (which means their
-  dimensions will be part of the final result obtained after the aggregating
-  `.compute()` call).
-
-  Args:
-    axis: The axis or axes along which numerator and denominator are aggregated.
-      If `None`, average is taken across all axes.
-
-  Returns:
-    The metric class.
-  """
-
-  @flax.struct.dataclass
-  class _TensorRatio(clu_metrics.Metric):
-    """Ratio of metrics class."""
-
-    numerator: jax.Array
-    denominator: jax.Array
-
-    @classmethod
-    def from_model_output(
-        cls,
-        *,
-        numerator: jax.Array,
-        denominator: jax.Array,
-        mask: jax.Array | None = None,
-        **_,
-    ) -> Self:
-      """Construct a metric instance given model output values."""
-      numerator, mask = _broadcast_masks(numerator, mask)
-      return cls(
-          numerator=jnp.where(mask, numerator, jnp.zeros_like(numerator)).sum(
-              axis=axis
-          ),
-          denominator=jnp.where(
-              mask, denominator, jnp.zeros_like(denominator)
-          ).sum(axis=axis),
-      )
-
-    def merge(self, other):
-      """Merges with another metric instance of the same type."""
-      return type(self)(
-          numerator=self.numerator + other.numerator,
-          denominator=self.denominator + other.denominator,
-      )
-
-    def compute(self) -> jax.Array:
-      ratio = self.numerator / self.denominator
-      return ratio
-
-    @classmethod
-    def empty(cls) -> Self:
-      return cls(
-          numerator=jnp.array(0, jnp.float32),
-          denominator=jnp.array(0, jnp.float32),
-      )
-
-    @classmethod
-    def from_outputs(cls, numerator_name: str, denominator_name: str):
-      """Calls `cls.from_model_output` with model output names.
-
-      Synopsis:
-
-        @flax.struct.dataclass
-        class Metrics(Collection):
-          loss: TensorRatio(axis=None).from_outputs("foo", "bar")
-
-      Args:
-        numerator_name: Name of the model output that should be passed as the
-          `numerator` keyword argument to `cls.from_model_output()`.
-        denominator_name: Name of the model output that should be passed as the
-          `denominator` keyword argument to `cls.from_model_output()`.
-
-      Returns:
-        A `Metric` derived from `cls` that calls `.from_model_output()` with the
-        the specified numerator and denominator arguments.
-      """
-
-      @flax.struct.dataclass
-      class FromOutputs(cls):
-        """Wrapper Metric class that collects numerator and denominator."""
-
-        @classmethod
-        def from_model_output(cls, **model_output):
-          numerator = jnp.array(model_output[numerator_name])
-          denominator = jnp.array(model_output[denominator_name])
-          mask = model_output.get("mask")
-          if mask is not None and (numerator.shape or [0])[0] != mask.shape[0]:
-            logging.warning(
-                "Ignoring mask for model output '%s' because of shape mismatch:"
-                " output.shape=%s vs. mask.shape=%s",
-                numerator_name,
-                numerator.shape,
-                mask.shape,
-            )
-            mask = None
-          return super().from_model_output(
-              numerator=numerator, denominator=denominator, mask=mask
-          )
-
-      return FromOutputs
-
-  return _TensorRatio
 
 
 class CollectingResults:
@@ -467,8 +332,6 @@ def run(
     enable_checkpoints: bool = True,
     data_checkpointer: checkpoint.Checkpointer = PYGRAIN_CHECKPOINTER,
     checkpoint_options: checkpoint.CheckpointManagerOptions | None = None,
-    results_format: Literal["hdf5", "zarr"] = "hdf5",
-    datacoords: xr.core.coordinates.DatasetCoordinates | None = None,
 ) -> None:
   """Runs a benchmark evaluation.
 
@@ -505,9 +368,6 @@ def run(
       iterator.
     checkpoint_options: The orbax checkpoint options (see
       `orbax.checkpoint.CheckpointManagerOptions`).
-    results_format: Writing format for results. It can be `"zarr"` or `"hdf5"`.
-    datacoords: The coordinates of the dataset being evaluated, used to annotate
-      collected results.
   """
   # **** Initialization ****
   workdir = epath.Path(workdir)
@@ -597,39 +457,12 @@ def run(
 
       # dump collected
       if dump_period and (ran_out or cur_step % dump_period == 0):
-        if results_format == "hdf5":
-          batch_path = results_subfolder / f"batch_{cur_step}.hdf5"
-          if not filesys.exists(batch_path):
-            hdf5_utils.save_array_dict(batch_path, collected.compute())  # pylint: disable=undefined-variable
-        elif results_format == "zarr":
-          for key, value in collected.compute().items():  # pylint: disable=undefined-variable
-            zarr_utils.collected_metrics_to_zarr(
-                value,
-                out_dir=results_subfolder,
-                basename=f"{key}_collected_metrics",
-                append_dim="time",
-                coords=datacoords,
-                append_slice=slice(
-                    cur_step - num_aggregation_batches, cur_step
-                ),
-            )
-        else:
-          raise ValueError(f"Unknown results format: {results_format}")
+        batch_path = results_subfolder / f"batch_{cur_step}.hdf5"
+        if not filesys.exists(batch_path):
+          hdf5_utils.save_array_dict(batch_path, collected.compute())  # pylint: disable=undefined-variable
 
-  if results_format == "hdf5":
-    # save final metrics to hdf5
-    agg_metric_path = results_subfolder / "final_aggregated_metrics.hdf5"
-    hdf5_utils.save_array_dict(
-        agg_metric_path, evaluator.state.compute_aggregated_metrics()
-    )
-  elif results_format == "zarr":
-    # save final metrics to zarr
-    for key, value in evaluator.state.compute_aggregated_metrics().items():
-      zarr_utils.aggregated_metrics_to_zarr(
-          value,
-          out_dir=results_subfolder,
-          basename=f"{key}_aggregated_metrics",
-          coords=datacoords,
-      )
-  else:
-    raise ValueError(f"Unknown results format: {results_format}")
+  # save final metrics to hdf5
+  agg_metric_path = results_subfolder / "final_aggregated_metrics.hdf5"
+  hdf5_utils.save_array_dict(
+      agg_metric_path, evaluator.state.compute_aggregated_metrics()
+  )

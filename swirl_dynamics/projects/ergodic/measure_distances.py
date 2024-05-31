@@ -29,11 +29,7 @@ Array = jax.Array
 MeasureDistFn = Callable[[Array, Array], Array]
 
 
-def mmd(
-    x: Array,
-    y: Array,
-    bandwidth: tuple[float, ...] = (0.2, 0.5, 0.9, 1.3),
-) -> Array:
+def mmd(x: Array, y: Array) -> Array:
   """Maximum Mean Discrepancy.
 
   Emprical maximum mean discrepancy. The lower the result the more evidence that
@@ -46,7 +42,6 @@ def mmd(
   Args:
     x: first sample, distribution P
     y: second sample, distribution Q
-    bandwidth: Multiscale levels for the bandwidth.
 
   Returns:
     mmd value.
@@ -77,7 +72,8 @@ def mmd(
   # Multiscale
   # TODO: We may need to experiment with these bandwidths to have
   # MMD loss better distinguish distributions, especially for high dim data
-  for a in bandwidth:
+  bandwidth_range = [0.2, 0.5, 0.9, 1.3]
+  for a in bandwidth_range:
     xx += a**2 * (a**2 + dxx) ** -1
     yy += a**2 * (a**2 + dyy) ** -1
     xy += a**2 * (a**2 + dxy) ** -1

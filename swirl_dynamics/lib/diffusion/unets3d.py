@@ -379,7 +379,7 @@ class UNet3d(nn.Module):
       )(x)
 
     cond = {} if cond is None else cond
-    x = unets.InterpConvMerge(
+    x = unets.MergeChannelCond(
         embed_dim=self.cond_embed_dim,
         resize_method=self.cond_resize_method,
         kernel_size=(3, 3),
